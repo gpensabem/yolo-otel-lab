@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>YOLO Telemetry Lab</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --line: #262b36; --ink: #e7e9ee; --muted: #8b93a7;
+    --accent: #f4a261; --ok: #2a9d8f; --err: #e63946;
+    --s-decode: #457b9d; --s-pre: #8338ec; --s-inf: #f4a261; --s-post: #2a9d8f; --s-render: #e76f51;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: center;
+           padding: 18px 24px; border-bottom: 1px solid var(--line); }
+  header h1 { font: 600 16px var(--mono); margin: 0; letter-spacing: .02em; }
+  header h1 span { color: var(--accent); }
+  nav { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; }
+  nav a { color: var(--ink); text-decoration: none; border: 1px solid var(--line);
+          padding: 6px 10px; border-radius: 6px; font-size: 13px; }
+  nav a:hover { border-color: var(--accent); }
+  main { display: grid; grid-template-columns: 320px 1fr; gap: 16px; padding: 16px 24px; }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; padding: 16px; } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+  .panel h2 { font: 600 11px var(--mono); text-transform: uppercase; letter-spacing: .1em;
+              color: var(--muted); margin: 0 0 12px; }
+  .stack > * + * { margin-top: 16px; }
+  .drop { border: 1.5px dashed var(--line); border-radius: 8px; padding: 22px 12px; text-align: center;
+          color: var(--muted); cursor: pointer; transition: border-color .15s; }
+  .drop.over, .drop:hover { border-color: var(--accent); color: var(--ink); }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  button { background: #222733; color: var(--ink); border: 1px solid var(--line); border-radius: 6px;
+           padding: 8px 12px; font: inherit; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.on { background: var(--accent); color: #111; border-color: var(--accent); }
+  label { display: block; color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  .counter { font: 12px var(--mono); color: var(--muted); }
+  .viewer { min-height: 360px; display: grid; place-items: center; background: #0b0d10;
+            border-radius: 8px; overflow: hidden; }
+  .viewer img { max-width: 100%; max-height: 70vh; display: block; }
+  .viewer .hint { color: var(--muted); }
+  .meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+  .kpi { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+  .kpi b { display: block; font: 600 20px var(--mono); }
+  .kpi small { color: var(--muted); }
+  .bar { display: flex; height: 22px; border-radius: 5px; overflow: hidden; background: #0b0d10; }
+  .bar div { height: 100%; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 8px; font: 12px var(--mono); color: var(--muted); }
+  .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 6px; }
+  table { width: 100%; border-collapse: collapse; font: 13px var(--mono); }
+  td, th { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 500; }
+  .trace { font: 12px var(--mono); word-break: break-all; }
+  .trace a { color: var(--accent); }
+  .err { color: var(--err); }
+  .flow { font: 12px var(--mono); color: var(--muted); white-space: pre; overflow-x: auto; margin: 0; }
+  #log { font: 12px var(--mono); color: var(--muted); max-height: 140px; overflow: auto; margin: 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>yolo<span>·</span>telemetry<span>·</span>lab</h1>
+  <nav>
+    <a id="lnk-dash" target="_blank">Dashboard Grafana</a>
+    <a id="lnk-explore" target="_blank">Traces (Tempo)</a>
+    <a id="lnk-prom" target="_blank">Prometheus</a>
+    <a href="http://localhost:8889/metrics" target="_blank">/metrics do collector</a>
+  </nav>
+</header>
+
+<main>
+  <aside class="stack">
+    <section class="panel">
+      <h2>Imagem</h2>
+      <div class="drop" id="drop">Arraste uma imagem ou clique para escolher<input type="file" id="file" accept="image/*" hidden></div>
+      <div class="row" id="samples" style="margin-top:12px"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Parâmetros</h2>
+      <label for="conf">Confiança mínima: <span id="conf-v">0.25</span></label>
+      <input type="range" id="conf" min="0.05" max="0.95" step="0.05" value="0.25">
+    </section>
+
+    <section class="panel">
+      <h2>Gerar telemetria</h2>
+      <div class="row">
+        <button id="btn-load">▶ Carga contínua</button>
+        <button id="btn-slow">Request lento</button>
+        <button id="btn-err">Erro 500</button>
+      </div>
+      <p class="counter" id="load-stats">parado</p>
+      <pre id="log"></pre>
+    </section>
+
+    <section class="panel">
+      <h2>Para onde vai cada sinal</h2>
+<pre class="flow">browser ─▶ FastAPI (:8000)
+           │ SDK OTel
+           ▼ OTLP gRPC :4317
+     otel-collector
+      ├─ traces  ─▶ Tempo
+      └─ metrics ─▶ :8889 ◀─ Prometheus
+                         ▲
+              Grafana ───┘ (+ Tempo)</pre>
+    </section>
+  </aside>
+
+  <section class="stack">
+    <div class="panel viewer" id="viewer"><span class="hint">Nenhuma detecção ainda — escolha uma imagem de exemplo.</span></div>
+
+    <div class="panel">
+      <h2>Última requisição</h2>
+      <div class="meta">
+        <div class="kpi"><b id="k-total">–</b><small>ms no servidor</small></div>
+        <div class="kpi"><b id="k-rtt">–</b><small>ms round-trip</small></div>
+        <div class="kpi"><b id="k-n">–</b><small>objetos</small></div>
+        <div class="kpi"><b id="k-size">–</b><small>resolução</small></div>
+      </div>
+      <h2 style="margin-top:18px">Tempo por etapa (cada uma é um span)</h2>
+      <div class="bar" id="bar"></div>
+      <div class="legend" id="legend"></div>
+      <p class="trace" style="margin-top:14px">trace_id: <span id="trace">–</span></p>
+    </div>
+
+    <div class="panel">
+      <h2>Detecções</h2>
+      <table><thead><tr><th>classe</th><th>confiança</th><th>caixa (x1,y1,x2,y2)</th></tr></thead>
+        <tbody id="dets"><tr><td colspan="3" class="counter">–</td></tr></tbody></table>
+    </div>
+  </section>
+</main>
+
+<script>
+const STAGE_COLORS = { preprocess: "var(--s-pre)", inference: "var(--s-inf)",
+                       postprocess: "var(--s-post)", render: "var(--s-render)" };
+let cfg = { grafana_url: "http://localhost:3000", prometheus_url: "http://localhost:9090" };
+let samples = [];
+const $ = (id) => document.getElementById(id);
+const conf = () => $("conf").value;
+
+function exploreUrl(traceId) {
+  const panes = { a: { datasource: "tempo", queries: [{ refId: "A",
+    datasource: { type: "tempo", uid: "tempo" }, queryType: "traceql", query: traceId || "{}" }],
+    range: { from: "now-1h", to: "now" } } };
+  return `${cfg.grafana_url}/explore?schemaVersion=1&orgId=1&panes=${encodeURIComponent(JSON.stringify(panes))}`;
+}
+
+function logLine(msg, cls = "") {
+  const line = document.createElement("div");
+  line.textContent = `${new Date().toLocaleTimeString()}  ${msg}`;
+  if (cls) line.className = cls;
+  $("log").prepend(line);
+  while ($("log").children.length > 40) $("log").lastChild.remove();
+}
+
+function render(res, rtt) {
+  $("viewer").innerHTML = `<img alt="resultado" src="data:image/jpeg;base64,${res.image_base64}">`;
+  const t = res.timings_ms, total = Object.values(t).reduce((a, b) => a + b, 0);
+  $("k-total").textContent = total.toFixed(1);
+  $("k-rtt").textContent = rtt.toFixed(0);
+  $("k-n").textContent = res.detections.length;
+  $("k-size").textContent = res.image_size.join("×");
+  $("bar").innerHTML = Object.entries(t).map(([k, v]) =>
+    `<div title="${k}: ${v} ms" style="width:${(v / total) * 100}%;background:${STAGE_COLORS[k]}"></div>`).join("");
+  $("legend").innerHTML = Object.entries(t).map(([k, v]) =>
+    `<span><i style="background:${STAGE_COLORS[k]}"></i>${k} ${v.toFixed(1)}ms</span>`).join("");
+  $("trace").innerHTML = `<a target="_blank" href="${exploreUrl(res.trace_id)}">${res.trace_id}</a>`;
+  $("dets").innerHTML = res.detections.length ? res.detections.map(d =>
+    `<tr><td>${d.class_name}</td><td>${d.confidence.toFixed(3)}</td><td>${d.box.map(Math.round).join(", ")}</td></tr>`).join("")
+    : `<tr><td colspan="3" class="counter">nenhum objeto acima de ${conf()}</td></tr>`;
+}
+
+async function call(url, opts = {}, show = true) {
+  const t0 = performance.now();
+  const r = await fetch(url, { method: "POST", ...opts });
+  const rtt = performance.now() - t0;
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(`${r.status} ${body.detail || r.statusText}`);
+  if (show && body.image_base64) render(body, rtt);
+  return { body, rtt };
+}
+
+async function detectSample(name, show = true) {
+  return call(`/detect/sample/${encodeURIComponent(name)}?conf=${conf()}`, {}, show);
+}
+
+async function detectFile(file) {
+  const fd = new FormData(); fd.append("file", file);
+  try {
+    const { body, rtt } = await call(`/detect?conf=${conf()}`, { body: fd });
+    logLine(`upload ${file.name}: ${body.detections.length} objetos, ${rtt.toFixed(0)}ms`);
+  } catch (e) { logLine(`upload ${file.name}: ${e.message}`, "err"); }
+}
+
+// ---------- carga contínua ----------
+let loading = false, sent = 0, failed = 0;
+async function worker() {
+  while (loading) {
+    const name = samples[Math.floor(Math.random() * samples.length)];
+    try { await detectSample(name, sent % 5 === 0); sent++; }
+    catch { failed++; }
+    $("load-stats").textContent = `rodando · ${sent} ok · ${failed} erros`;
+    await new Promise(r => setTimeout(r, 150 + Math.random() * 400));
+  }
+}
+$("btn-load").onclick = () => {
+  loading = !loading;
+  $("btn-load").classList.toggle("on", loading);
+  $("btn-load").textContent = loading ? "■ Parar carga" : "▶ Carga contínua";
+  if (loading) { worker(); worker(); } else $("load-stats").textContent = `parado · ${sent} ok · ${failed} erros`;
+};
+$("btn-slow").onclick = async () => {
+  try { const { body } = await call("/simulate/slow?ms=1200"); logLine(`lento: ${body.slept_ms}ms trace=${body.trace_id.slice(0, 8)}…`); }
+  catch (e) { logLine(e.message, "err"); }
+};
+$("btn-err").onclick = async () => {
+  try { await call("/simulate/error"); } catch (e) { logLine(`erro simulado: ${e.message}`, "err"); }
+};
+
+// ---------- upload ----------
+const drop = $("drop");
+drop.onclick = () => $("file").click();
+$("file").onchange = (e) => e.target.files[0] && detectFile(e.target.files[0]);
+drop.ondragover = (e) => { e.preventDefault(); drop.classList.add("over"); };
+drop.ondragleave = () => drop.classList.remove("over");
+drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove("over");
+  if (e.dataTransfer.files[0]) detectFile(e.dataTransfer.files[0]); };
+$("conf").oninput = () => $("conf-v").textContent = Number(conf()).toFixed(2);
+
+// ---------- init ----------
+(async () => {
+  try { cfg = await (await fetch("/config")).json(); } catch {}
+  $("lnk-dash").href = `${cfg.grafana_url}/d/yolo-otel/yolo-otel-lab`;
+  $("lnk-explore").href = exploreUrl('{resource.service.name="yolo-api"}');
+  $("lnk-prom").href = `${cfg.prometheus_url}/graph?g0.expr=${encodeURIComponent("sum by (stage) (rate(yolo_stage_duration_milliseconds_sum[1m])) / sum by (stage) (rate(yolo_stage_duration_milliseconds_count[1m]))")}`;
+  samples = await (await fetch("/samples")).json();
+  $("samples").innerHTML = samples.map(s => `<button data-s="${s}">${s}</button>`).join("");
+  $("samples").querySelectorAll("button").forEach(b => b.onclick = async () => {
+    try { const { body, rtt } = await detectSample(b.dataset.s);
+          logLine(`${b.dataset.s}: ${body.detections.length} objetos, ${rtt.toFixed(0)}ms`); }
+    catch (e) { logLine(e.message, "err"); }
+  });
+})();
+</script>
+</body>
+</html>

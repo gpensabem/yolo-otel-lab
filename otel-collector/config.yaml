@@ -1,0 +1,58 @@
+# OpenTelemetry Collector: recebe OTLP da app e distribui para os backends.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  # Protege o collector de estourar memória sob carga
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 256
+    spike_limit_mib: 64
+  # Agrupa telemetria em lotes antes de exportar (menos chamadas de rede)
+  batch:
+    timeout: 2s
+
+exporters:
+  # Traces -> Tempo via OTLP
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+
+  # Métricas -> expostas em formato Prometheus em :8889/metrics (Prometheus faz scrape)
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    # Converte atributos do resource (service.name, deployment.environment...) em labels
+    resource_to_telemetry_conversion:
+      enabled: true
+    # OpenMetrics permite exemplares (trace_id anexado a pontos de histograma)
+    enable_open_metrics: true
+
+  # Imprime um resumo no log do collector (docker compose logs otel-collector)
+  debug:
+    verbosity: basic
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp/tempo, debug]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [prometheus, debug]
+  telemetry:
+    # Métricas internas do próprio collector em :8888
+    metrics:
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 0.0.0.0
+                port: 8888
